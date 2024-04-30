@@ -17,7 +17,13 @@ use ark_std::{
 use derivative::Derivative;
 use zeroize::Zeroize;
 
+use ark_std::io::Cursor;
+
 use crate::{AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
+
+extern "C" {
+    fn syscall_bn254_add(p: *mut u32, q: *const u32);
+}
 
 /// Collection of types (mainly fields and curves) that together describe
 /// how to compute a pairing over a pairing-friendly curve.
@@ -210,10 +216,22 @@ impl<'a, P: Pairing> Add<&'a Self> for PairingOutput<P> {
 
 impl<'a, P: Pairing> AddAssign<&'a Self> for PairingOutput<P> {
     fn add_assign(&mut self, other: &'a Self) {
-        self.0 *= other.0;
+        let mut a_bytes = Vec::new();
+        self.0.serialize_uncompressed(&mut a_bytes).unwrap();
+        let a = a_bytes.as_mut_slice();
+
+        let mut b_bytes = Vec::new();
+        other.0.serialize_uncompressed(&mut b_bytes).unwrap();
+        let b = b_bytes.as_slice();
+
+        unsafe {
+            syscall_bn254_add(a.as_mut_ptr() as *mut u32, b.as_ptr() as *const u32);
+        }
+
+        let mut cursor = Cursor::new(a);
+        self.0 = P::TargetField::deserialize_uncompressed(&mut cursor).unwrap();
     }
 }
-
 impl<'a, P: Pairing> SubAssign<&'a Self> for PairingOutput<P> {
     fn sub_assign(&mut self, other: &'a Self) {
         self.0 *= other.0.cyclotomic_inverse().unwrap();
